@@ -1,28 +1,18 @@
 {
   "name": "screen-break",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
-  "bin": "./index.js",
   "type": "commonjs",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "bin": "./index.js",
   "dependencies": {
     "uiohook-napi": "^1.5.5"
-  },
-  "allowScripts": {
-    "uiohook-napi@1.5.5": true
   },
   "pkg": {
     "scripts": [
       "index.js"
     ],
     "assets": [
-      "node_modules/uiohook-napi/prebuilds/**/*"
+      "node_modules/uiohook-napi/prebuilds/**/*",
+      "AutoHotkey_2.0.18_setup.exe"
     ]
   }
 }
