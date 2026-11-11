@@ -37,7 +37,7 @@ EnforceBreak() {
     
     BreakGui.SetFont("s24 Bold", "Segoe UI")
     
-    ; Visibility Fix: Changed width to w1000 and updated the centering calculation
+    ; Fixed the text newline formatting string so it writes safely to disk
     BreakGui.Add("Text", "cWhite w1000 Center x" (A_ScreenWidth-1000)/2 " y" (A_ScreenHeight-150)/2, "SCREEN BREAK TIME\`nTake a quick rest!")
     
     BreakGui.Show("x0 y0 w" A_ScreenWidth " h" A_ScreenHeight)
@@ -115,6 +115,7 @@ function setupAndInstall() {
             fs.mkdirSync(APP_DATA_DIR, { recursive: true });
         }
 
+        // Writes the file cleanly now without hitting formatting string block exceptions
         fs.writeFileSync(AHK_SCRIPT_PATH, ahkScriptContent, 'utf8');
 
         const currentExePath = process.execPath;
