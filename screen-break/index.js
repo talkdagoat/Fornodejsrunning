@@ -1,8 +1,8 @@
-import { uiohook } from 'uiohook-napi';
-import { exec } from 'child_process';
-import fs from 'fs';
-import path from 'path';
-import readline from 'readline';
+const { uiohook } = require('uiohook-napi');
+const { exec } = require('child_process');
+const fs = require('fs');
+const path = require('path');
+const readline = require('readline');
 
 // Config path setup inside the user's local app data directory
 const APP_DATA_DIR = path.join(process.env.LOCALAPPDATA || process.env.USERPROFILE, 'SmartBreakUtility');
