@@ -1,148 +1,149 @@
-const { uiohook } = require('uiohook-napi');
 const { exec } = require('child_process');
 const fs = require('fs');
 const path = require('path');
-const readline = require('readline');
 
-// Config path setup inside the user's local app data directory
+// Target directory paths for local app storage and Windows Startup configuration
 const APP_DATA_DIR = path.join(process.env.LOCALAPPDATA || process.env.USERPROFILE, 'SmartBreakUtility');
-const CONFIG_PATH = path.join(APP_DATA_DIR, 'config.json');
+const AHK_SCRIPT_PATH = path.join(APP_DATA_DIR, 'SmartBreak.ahk');
 const STARTUP_DIR = path.join(process.env.APPDATA, 'Microsoft\\Windows\\Start Menu\\Programs\\Startup');
 
-// Default Application State Configuration
-let config = {
-    enabled: true,
-    intervalMinutes: 60
-};
+// Full configuration text string of your AutoHotkey v2 break control code
+const ahkScriptContent = `#Requires AutoHotkey v2.0
+#SingleInstance Force
+Persistent
 
-let breakTimer = null;
+global EnabledStatus := 1         
+global IntervalMinutes := 60      
+global BreakDurationSeconds := 30 
+global MyGui := ""
+global BreakGui := ""
 
-// --- Helper Functions ---
+UpdateTimer()
 
-function ensureDirectoryExists() {
-    if (!fs.existsSync(APP_DATA_DIR)) {
-        fs.mkdirSync(APP_DATA_DIR, { recursive: true });
+UpdateTimer() {
+    SetTimer(EnforceBreak, 0)
+    if (EnabledStatus == 1) {
+        IntervalMs := IntervalMinutes * 60 * 1000
+        SetTimer(EnforceBreak, IntervalMs)
     }
 }
 
-function loadConfig() {
-    ensureDirectoryExists();
-    if (fs.existsSync(CONFIG_PATH)) {
-        try {
-            config = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
-        } catch (e) {
-            saveConfig();
-        }
+EnforceBreak() {
+    global BreakGui, BreakDurationSeconds
+    BlockInput("On")
+    
+    BreakGui := Gui("-Caption +AlwaysOnTop +ToolWindow")
+    BreakGui.BackColor := "000000"
+    
+    BreakGui.SetFont("s24 Bold", "Segoe UI")
+    
+    ; Visibility Fix: Changed width to w1000 and updated the centering calculation
+    BreakGui.Add("Text", "cWhite w1000 Center x" (A_ScreenWidth-1000)/2 " y" (A_ScreenHeight-150)/2, "SCREEN BREAK TIME\`nTake a quick rest!")
+    
+    BreakGui.Show("x0 y0 w" A_ScreenWidth " h" A_ScreenHeight)
+    Sleep(BreakDurationSeconds * 1000)
+    
+    BreakGui.Destroy()
+    BlockInput("Off")
+}
+
+^!b:: {
+    global MyGui, EnabledStatus, IntervalMinutes, BreakDurationSeconds
+    
+    if (MyGui != "") {
+        MyGui.Destroy()
+    }
+    
+    MyGui := Gui("-MinimizeBox -MaximizeBox +AlwaysOnTop", "Smart Break Configuration")
+    MyGui.SetFont("s10", "Segoe UI")
+    
+    StatusText := (EnabledStatus == 1) ? "Status: ACTIVE (ON)" : "Status: DISABLED (OFF)"
+    
+    MyGui.SetFont("s11 Bold")
+    StatusDisplay := MyGui.Add("Text", "w250 Center vStatusDisplay", StatusText)
+    MyGui.SetFont("s10 Norm")
+    
+    MyGui.Add("Text", "x20 y50", "Interval (Minutes):")
+    IntervalInput := MyGui.Add("Edit", "x160 y47 w60 vNewInterval Number", IntervalMinutes)
+    
+    MyGui.Add("Text", "x20 y85", "Break Length (Seconds):")
+    DurationInput := MyGui.Add("Edit", "x160 y82 w60 vNewDuration Number", BreakDurationSeconds)
+    
+    ToggleBtn := MyGui.Add("Button", "x20 y125 w100", "Toggle ON/OFF")
+    ToggleBtn.OnEvent("Click", (*) => ToggleStatusAction(StatusDisplay))
+    
+    SaveBtn := MyGui.Add("Button", "x160 y125 w100", "Save & Apply")
+    SaveBtn.OnEvent("Click", (*) => SaveSettingsAction(IntervalInput, DurationInput))
+    
+    CloseBtn := MyGui.Add("Button", "x90 y165 w100", "Hide Menu")
+    CloseBtn.OnEvent("Click", (*) => MyGui.Destroy())
+    
+    MyGui.Show("w290 h210")
+}
+
+ToggleStatusAction(StatusCtrl) {
+    global EnabledStatus
+    if (EnabledStatus == 1) {
+        EnabledStatus := 0
+        StatusCtrl.Text := "Status: DISABLED (OFF)"
     } else {
-        saveConfig();
+        EnabledStatus := 1
+        StatusCtrl.Text := "Status: ACTIVE (ON)"
     }
 }
 
-function saveConfig() {
-    ensureDirectoryExists();
-    fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
+SaveSettingsAction(IntervalCtrl, DurationCtrl) {
+    global IntervalMinutes, BreakDurationSeconds, MyGui
+    ParsedMins := Integer(IntervalCtrl.Value)
+    ParsedSecs := Integer(DurationCtrl.Value)
+    
+    if (ParsedMins > 0 && ParsedSecs > 0) {
+        IntervalMinutes := ParsedMins
+        BreakDurationSeconds := ParsedSecs
+        UpdateTimer()
+        MsgBox("Settings saved successfully!", "Smart Break", 64)
+        MyGui.Destroy()
+    } else {
+        MsgBox("Please enter valid positive numbers.", "Error", 48)
+    }
 }
+`;
 
-// Automatically copy the running executable into the Windows Startup directory
-function installToStartup() {
+function setupAndInstall() {
     try {
+        if (!fs.existsSync(APP_DATA_DIR)) {
+            fs.mkdirSync(APP_DATA_DIR, { recursive: true });
+        }
+
+        fs.writeFileSync(AHK_SCRIPT_PATH, ahkScriptContent, 'utf8');
+
         const currentExePath = process.execPath;
-        // Only run copy sequence if the file is actually running as a packaged binary EXE
         if (path.extname(currentExePath).toLowerCase() === '.exe') {
-            const targetStartupPath = path.join(STARTUP_DIR, path.basename(currentExePath));
-            if (!fs.existsSync(targetStartupPath)) {
-                fs.copyFileSync(currentExePath, targetStartupPath);
-                console.log('Installed successfully to Windows Startup.');
-            }
-        }
-    } catch (error) {
-        console.error('Failed to configure startup profile:', error.message);
-    }
-}
-
-// Core operational mechanism controlling screen locks
-function startBreakTimer() {
-    if (breakTimer) clearInterval(breakTimer);
-    
-    if (!config.enabled) {
-        console.log('Utility is currently disabled. Timer paused.');
-        return;
-    }
-
-    const intervalMs = config.intervalMinutes * 60 * 1000;
-    console.log(`Timer updated. System will enforce a break every ${config.intervalMinutes} minutes.`);
-    
-    breakTimer = setInterval(() => {
-        console.log('Enforcing break condition...');
-        exec('rundll32.exe user32.dll,LockWorkStation');
-    }, intervalMs);
-}
-
-// --- Menu UI Management ---
-
-function openConfigurationMenu() {
-    // Bring focus to the console window using powershell command structures
-    exec('powershell -Command "(New-Object -ComObject WScript.Shell).AppActivate(' + process.pid + ')"');
-
-    const rl = readline.createInterface({
-        input: process.stdin,
-        output: process.stdout
-    });
-
-    console.clear();
-    console.log('====================================');
-    console.log('       SMART BREAK UTILITY          ');
-    console.log('====================================');
-    console.log(` Status:    ${config.enabled ? 'ON' : 'OFF'}`);
-    console.log(` Interval:  ${config.intervalMinutes} Minutes`);
-    console.log('------------------------------------');
-    console.log(' 1. Toggle ON / OFF');
-    console.log(' 2. Change Interval Timer');
-    console.log(' 3. Exit Menu');
-    console.log('====================================');
-
-    rl.question('Select an option (1-3): ', (answer) => {
-        if (answer.trim() === '1') {
-            config.enabled = !config.enabled;
-            saveConfig();
-            startBreakTimer();
-            rl.close();
-            openConfigurationMenu();
-        } else if (answer.trim() === '2') {
-            rl.question('\nEnter new interval structure in minutes: ', (mins) => {
-                const parsedMins = parseInt(mins, 10);
-                if (!isNaN(parsedMins) && parsedMins > 0) {
-                    config.intervalMinutes = parsedMins;
-                    saveConfig();
-                    startBreakTimer();
-                } else {
-                    console.log('Invalid timing entry sequence detected.');
-                }
-                rl.close();
-                openConfigurationMenu();
+            const startupShortcutPath = path.join(STARTUP_DIR, 'SmartBreak.lnk');
+            const createShortcutCommand = `powershell -Command "$WshShell = New-Object -ComObject WScript.Shell; $Shortcut = $WshShell.CreateShortcut('${startupShortcutPath}'); $Shortcut.TargetPath = '${AHK_SCRIPT_PATH}'; $Shortcut.Save()"`;
+            
+            exec(createShortcutCommand, (err) => {
+                if (err) console.error('Failed creating startup registry shortcut asset:', err.message);
             });
-        } else {
-            console.log('\nReturning app to background monitor context...');
-            rl.close();
         }
+
+        exec(`start "" "${AHK_SCRIPT_PATH}"`, (err) => {
+            if (err) console.error('Could not initiate AutoHotkey subprocess client:', err.message);
+        });
+
+        showWelcomeDialog();
+
+    } catch (error) {
+        console.error('Installation routine encountered an unhandled exception state:', error.message);
+    }
+}
+
+function showWelcomeDialog() {
+    const psCommand = `powershell -Command "[void][System.Reflection.Assembly]::LoadWithPartialName('System.Windows.Forms'); [System.Windows.Forms.MessageBox]::Show('Smart Break Utility successfully installed and active in the background!\\n\\nCommands:\\nPress [ Ctrl + Alt + B ] at any time to open your settings configuration panel.', 'Smart Break Utility Setup', 0, 64)"`;
+    
+    exec(psCommand, () => {
+        process.exit(0);
     });
 }
 
-// --- Lifecycle Initialization ---
-
-loadConfig();
-installToStartup();
-startBreakTimer();
-
-console.log('Smart Break Service Active in Background.');
-console.log('Press Ctrl + Alt + B inside your terminal workspace to open the setup screen dashboard.');
-
-// Global Hotkey Listening Sequence
-uiohook.on('keydown', (event) => {
-    // Trigger configuration dashboard shortcut via Ctrl + Alt + B (B keycode is 48)
-    if (event.ctrlKey && event.altKey && event.keycode === 48) {
-        openConfigurationMenu();
-    }
-});
-
-uiohook.start();
+setupAndInstall();
